@@ -10,6 +10,11 @@ used for the platform support, CORE-ET RTL context, and RISC-V ET toolchain.
 Hugging Face model references are downloaded on demand. Generated ET-SoC1 ELFs
 are built locally from the checked-in port sources.
 
+New to the silicon? Read [`ET_SOC1_HARDWARE.md`](ET_SOC1_HARDWARE.md) first for a
+cited overview of the ET-SoC-1 (1,088 RISC-V ET-Minion cores with tensor units,
+the shire/neighborhood hierarchy, memory model, and the Esperanto → AINekko →
+OpenHW CORE-ET lineage that explains the `erbium` toolchain naming).
+
 ## Ported Models
 
 The shared `ported_models` set for this flow is:

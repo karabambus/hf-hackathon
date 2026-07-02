@@ -5,10 +5,12 @@
 > without losing a day to footguns we already hit.
 >
 > This guide complements the repo quickstart
-> [`ET_SOC1_QUICKSTART.md`](../ET_SOC1_QUICKSTART.md) and the upstream
+> [`ET_SOC1_QUICKSTART.md`](../ET_SOC1_QUICKSTART.md), the hardware reference
+> [`ET_SOC1_HARDWARE.md`](../ET_SOC1_HARDWARE.md), and the upstream
 > ET backend reference
 > [`docs/backend/ET.md`](../ported_models/llama_cpp_et/src/llama.cpp-et/docs/backend/ET.md).
-> Read the quickstart for this repo's CI flow. Read ET.md for the exact
+> Read the quickstart for this repo's CI flow. Read the hardware reference for
+> cited chip specs behind the mental model below. Read ET.md for the exact
 > toolchain install and CMake flags. Read this for the mental model, the
 > footguns that cause silent corruption or hangs, and the performance playbook.
 
@@ -47,12 +49,16 @@ for porting:
 
 ```text
 Chip
- `-- ~32 Shires           (a shire is a tile on a 2D mesh / NoC)
-      `-- ~32 Minions     (a minion is a small in-order RISC-V core)
+ `-- 34 Shires            (a shire is a tile on a 2D mesh / NoC)
+      `-- 32 Minions      (a minion is a small in-order RISC-V core; 34 x 32 = 1088)
            `-- 2 Harts    (hardware threads per minion)
                 |-- hart 0 -> has the matrix/tensor engine
                 `-- hart 1 -> no matrix engine
 ```
+
+(1,088 ET-Minion cores total, plus 4 big out-of-order ET-Maxion cores on the
+host/OS side. See [`ET_SOC1_HARDWARE.md`](../ET_SOC1_HARDWARE.md) for the sourced
+numbers.)
 
 Three facts should reshape how you write code:
 
@@ -153,6 +159,21 @@ For a new model on an existing framework, the smallest useful PR usually adds:
 3. A `.github/ci/benchmark_config.json` row that points at the correct runner.
 
 ## 4. The Hardware In Depth
+
+For the full sourced spec sheet — process node, transistor count, TOPS, the
+neighborhood/shire/tile breakdown, and the Esperanto → AINekko/OpenHW lineage —
+see [`ET_SOC1_HARDWARE.md`](../ET_SOC1_HARDWARE.md). The numbers that shape
+kernel decisions:
+
+| Property | Value |
+|---|---|
+| ET-Minion cores | 1,088 in-order RV64, each with a vector/tensor unit, 2 harts |
+| Grouping | 8 minions = neighborhood, 4 neighborhoods = shire (32 minions), 34 shires |
+| Tensor path | custom multi-cycle instruction, 512-bit datapath, up to 512 cycles/op |
+| Per-shire L2 | four 1 MiB SRAM banks, software-configurable as cache **or** scratchpad |
+| On-chip SRAM | >160 MB total |
+| Main memory | LPDDR4x (~4 GiB), the bandwidth wall |
+| Process / power | TSMC 7 nm, 100–200 TOPS, <20 W typical |
 
 Think in three memory tiers:
 

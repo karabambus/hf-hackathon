@@ -52,6 +52,7 @@ CI can run and comment on your submission.
 Start here:
 
 - [`docs/ET_SOC1_QUICKSTART.md`](docs/ET_SOC1_QUICKSTART.md): CORE-ET quickstart on ET-SoC1 boards; install the toolchain, download Hugging Face refs, build, and run.
+- [`docs/ET_SOC1_HARDWARE.md`](docs/ET_SOC1_HARDWARE.md): cited ET-SoC-1 hardware reference — cores, shire/neighborhood hierarchy, tensor unit, memory model, and the Esperanto/AINekko/OpenHW lineage.
 - [`docs/HF_REFERENCES.md`](docs/HF_REFERENCES.md): pinned Hugging Face base models for the showcased workloads and new submissions.
 - [`docs/BOARD_ACCESS.md`](docs/BOARD_ACCESS.md): join Discord and request Tailscale access to the board pool.
 - [`docs/opinionated_porting_options/afonso.md`](docs/opinionated_porting_options/afonso.md): layer-by-layer porting, PMC measurement, and
@@ -78,6 +79,7 @@ the platform sources:
 
 - [`docs/SUBMISSION_GUIDE.md`](docs/SUBMISSION_GUIDE.md): required PR shape and checklist.
 - [`docs/ET_SOC1_QUICKSTART.md`](docs/ET_SOC1_QUICKSTART.md): CORE-ET quickstart on ET-SoC1 boards.
+- [`docs/ET_SOC1_HARDWARE.md`](docs/ET_SOC1_HARDWARE.md): cited ET-SoC-1 hardware reference and lineage.
 - [`docs/HF_REFERENCES.md`](docs/HF_REFERENCES.md): pinned base model references.
 - [`docs/opinionated_porting_options/afonso.md`](docs/opinionated_porting_options/afonso.md): model-porting workflow.
 - [`docs/opinionated_porting_options/martin.md`](docs/opinionated_porting_options/martin.md): board and performance guidance.
