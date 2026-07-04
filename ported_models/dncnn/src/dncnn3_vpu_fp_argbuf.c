@@ -58,6 +58,15 @@ extern char heap0_end[];
 #define BENCH_FLB         2u
 #define BENCH_FCC         FCC_0
 
+#define PADW         (IMG_W + 2u)          /* 66: real 64 + 1 halo each side */
+#define PADH         (IMG_H + 2u)          /* 66 */
+#define PADACT_BYTES (PADW * PADH * CH * sizeof(float))
+#define PACT0_OFFSET 0x00C00000u          /* 12 MiB: clear of act/wpack/private regions */
+#define PACT1_OFFSET (PACT0_OFFSET + PADACT_BYTES)
+
+/* pointer to real pixel (y,x) inside a padded PADH×PADW×CH float buffer */
+#define PAD_AT(buf, y, x)  ((buf) + (((y) + 1u) * PADW + ((x) + 1u)) * CH)
+
 struct dncnn_slot {
 	uint32_t magic;
 	uint32_t hart_id;
@@ -95,6 +104,29 @@ struct bench_barrier_state {
 };
 
 static volatile struct bench_barrier_state *g_barrier;
+
+static inline void copy_px(float *dst, const float *src){
+	for (uint32_t c = 0; c < CH; c++) dst[c] = src[c];
+}
+
+static void fill_halo(float *buf)
+{
+    const uint32_t stride = PADW * CH;   
+
+    /* 1. left & right columns, */
+    for (uint32_t y = 1; y <= IMG_H; y++) {
+        float *rowp = buf + y * stride;
+        copy_px(rowp + 0 * CH,            rowp + 1 * CH);         /* left  halo = col 1 */
+        copy_px(rowp + (PADW - 1) * CH,   rowp + (PADW - 2) * CH);/* right halo = col IMG_W */
+    }
+
+    /* 2. top & bottom rows*/
+    for (uint32_t x = 0; x < PADW; x++) {
+		float *colp = buf + x * CH;  
+		copy_px(colp + 0 * stride, colp + 1 * stride);
+        copy_px(colp + (PADH - 1) * stride, colp + IMG_H * stride);
+    }
+}
 
 static uintptr_t buffer_base_from_args(uintptr_t arg_area)
 {
@@ -651,6 +683,80 @@ static void conv_final_fp(const float *input, const float *weights,
 	}
 }
 
+#ifdef DNCNN_HALO_PAD
+/* Padded (halo) variants. Every pixel uses the VPU path — no interior branch,
+ * no scalar border fallback — because fill_halo() gives all neighbors valid
+ * edge-replicated data. Buffers are PADH*PADW*CH; row stride = PADW*CH. */
+static void conv_first_pad(const uint8_t *input, const int8_t *weights,
+			   float *output, uint32_t row0, uint32_t row1)
+{
+	for (uint32_t oc = 0; oc < CH; oc++) {
+		const int8_t *const w = weights + oc * K * K;
+		int32_t bias = 0;
+
+		for (uint32_t i = 0; i < K * K; i++)
+			bias -= 128 * (int32_t)w[i];
+
+		for (uint32_t y = row0; y < row1; y++) {
+			for (uint32_t x = 0; x < IMG_W; x++) {
+				int32_t acc = bias;
+
+				for (int ky = -1; ky <= 1; ky++) {
+					const int yy = clamp_coord((int)y + ky, IMG_H);
+
+					for (int kx = -1; kx <= 1; kx++) {
+						const int xx = clamp_coord((int)x + kx, IMG_W);
+						acc += (int32_t)input[(unsigned)yy * IMG_W +
+								      (unsigned)xx] *
+						       w[(ky + 1) * 3 + (kx + 1)];
+					}
+				}
+
+				PAD_AT(output, y, x)[oc] =
+					relu_f32((float)acc * FIRST_SCALE);
+			}
+		}
+	}
+}
+
+static void conv_hidden_pad(const float *input, const float *weights,
+			    float *output, uint32_t row0, uint32_t row1)
+{
+	for (uint32_t oc = 0; oc < CH; oc += 2u) {
+		const float *const w0 = weights + oc * K * K * CH;
+		const float *const w1 = w0 + K * K * CH;
+
+		for (uint32_t y = row0; y < row1; y++) {
+			for (uint32_t x = 0; x < IMG_W; x++) {
+				float acc0, acc1;
+				const float *const p = PAD_AT(input, y, x);
+				float *const o = PAD_AT(output, y, x);
+
+				vpu_accum3x3_dot16x2_f32(p, w0, w1, PADW * CH,
+							 &acc0, &acc1);
+				o[oc]      = relu_f32(acc0 * HIDDEN_SCALE);
+				o[oc + 1u] = relu_f32(acc1 * HIDDEN_SCALE);
+			}
+		}
+	}
+}
+
+static void conv_final_pad(const float *input, const float *weights,
+			   uint8_t *output, uint32_t row0, uint32_t row1)
+{
+	for (uint32_t y = row0; y < row1; y++) {
+		for (uint32_t x = 0; x < IMG_W; x++) {
+			const float *const p = PAD_AT(input, y, x);
+			const float acc = vpu_accum3x3_dot16_f32(p, weights,
+								 PADW * CH);
+
+			output[y * IMG_W + x] =
+				clamp_u8_from_f32(128.0f + acc * FINAL_SCALE);
+		}
+	}
+}
+#endif  /* DNCNN_HALO_PAD */
+
 static uint32_t stripe_checksum(const uint8_t *output,
 				uint32_t row0, uint32_t row1)
 {
@@ -766,6 +872,10 @@ int main(uintptr_t arg_area)
 	uint8_t *const final_output = base + OUTPUT_OFFSET;
 	float *const act0 = (float *)(base + ACT0_OFFSET);
 	float *const act1 = (float *)(base + ACT1_OFFSET);
+#ifdef DNCNN_HALO_PAD
+	float *const pact0 = (float *)(base + PACT0_OFFSET);
+	float *const pact1 = (float *)(base + PACT1_OFFSET);
+#endif
 #ifdef DNCNN_VPU_SHARED_WPACK
 	float *const wpack = (float *)(base + WPACK_OFFSET);
 #else
@@ -803,7 +913,45 @@ int main(uintptr_t arg_area)
 	FENCE;
 
 	for (uint32_t pass = 0; pass < DNCNN_PASSES; pass++) {
-#ifdef DNCNN_VPU_PRIVATE_FUSED
+#ifdef DNCNN_HALO_PAD
+		conv_first_pad(input, weights, pact0, row0, row1);
+		FENCE;
+		bench_barrier();
+		if (hart_id == 0u) {
+			fill_halo(pact0);
+			FENCE;
+			evict(pact0, PADACT_BYTES);
+			WAIT_CACHEOPS;
+		}
+		bench_barrier();
+		{
+			const float *const hidden_w = wpack;
+
+			conv_hidden_pad(pact0, hidden_w, pact1, row0, row1);
+			FENCE;
+			bench_barrier();
+			if (hart_id == 0u) { fill_halo(pact1); FENCE; evict(pact1, PADACT_BYTES); WAIT_CACHEOPS; }
+			bench_barrier();
+
+			conv_hidden_pad(pact1, hidden_w + CH * K * K * CH, pact0, row0, row1);
+			FENCE;
+			bench_barrier();
+			if (hart_id == 0u) { fill_halo(pact0); FENCE; evict(pact0, PADACT_BYTES); WAIT_CACHEOPS; }
+			bench_barrier();
+
+			conv_hidden_pad(pact0, hidden_w + 2u * CH * K * K * CH, pact1, row0, row1);
+			FENCE;
+			bench_barrier();
+			if (hart_id == 0u) { fill_halo(pact1); FENCE; evict(pact1, PADACT_BYTES); WAIT_CACHEOPS; }
+			bench_barrier();
+
+			conv_final_pad(pact1, wpack + WH_BYTES, final_output, row0, row1);
+			FENCE;
+			evict(final_output + row0 * IMG_W, (row1 - row0) * IMG_W);
+			WAIT_CACHEOPS;
+			bench_barrier();
+		}
+#elif defined(DNCNN_VPU_PRIVATE_FUSED)
 		const uint32_t first_row0 = row0 > 4u ? row0 - 4u : 0u;
 		const uint32_t first_row1 = row1 + 4u < IMG_H ? row1 + 4u : IMG_H;
 		const uint32_t hidden0_row0 = row0 > 3u ? row0 - 3u : 0u;
