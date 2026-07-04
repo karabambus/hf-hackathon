@@ -885,6 +885,21 @@ static void prefetch_pact_read(const float *buffer, uint32_t row0, uint32_t row1
 	(void)row1;
 #endif
 }
+
+/* Evict this hart's just-written interior rows to memory so other harts + fill_halo see them. */
+static inline void evict_pact_write(float *buf, uint32_t row0, uint32_t row1)
+{
+	evict(buf + (uint64_t)(row0 + 1u) * PADW * CH,
+	      (uint64_t)(row1 - row0) * PADW * CH * sizeof(float));
+}
+
+/* Invalidate this hart's read window (padded rows row0..row1+1, incl. halo) before reading. */
+static inline void evict_pact_read(const float *buf, uint32_t row0, uint32_t row1)
+{
+	const uint32_t p1 = (row1 + 2u <= PADH) ? (row1 + 2u) : PADH;
+	evict(buf + (uint64_t)row0 * PADW * CH,
+	      (uint64_t)(p1 - row0) * PADW * CH * sizeof(float));
+}
 #endif  /* DNCNN_HALO_PAD */
 
 int main(uintptr_t arg_area)
@@ -945,6 +960,8 @@ int main(uintptr_t arg_area)
 #ifdef DNCNN_HALO_PAD
 		conv_first_pad(input, weights, pact0, row0, row1);
 		FENCE;
+		evict_pact_write(pact0, row0, row1);
+		WAIT_CACHEOPS;
 		bench_barrier();
 		if (hart_id == 0u) {
 			fill_halo(pact0);
@@ -955,28 +972,33 @@ int main(uintptr_t arg_area)
 		bench_barrier();
 		{
 			const float *const hidden_w = wpack;
+			const uint32_t hstep = CH * K * K * CH;
 
+			evict_pact_read(pact0, row0, row1); WAIT_CACHEOPS;
 			prefetch_pact_read(pact0, row0, row1);
 			conv_hidden_pad(pact0, hidden_w, pact1, row0, row1);
-			FENCE;
+			FENCE; evict_pact_write(pact1, row0, row1); WAIT_CACHEOPS;
 			bench_barrier();
 			if (hart_id == 0u) { fill_halo(pact1); FENCE; evict(pact1, PADACT_BYTES); WAIT_CACHEOPS; }
 			bench_barrier();
 
+			evict_pact_read(pact1, row0, row1); WAIT_CACHEOPS;
 			prefetch_pact_read(pact1, row0, row1);
-			conv_hidden_pad(pact1, hidden_w + CH * K * K * CH, pact0, row0, row1);
-			FENCE;
+			conv_hidden_pad(pact1, hidden_w + hstep, pact0, row0, row1);
+			FENCE; evict_pact_write(pact0, row0, row1); WAIT_CACHEOPS;
 			bench_barrier();
 			if (hart_id == 0u) { fill_halo(pact0); FENCE; evict(pact0, PADACT_BYTES); WAIT_CACHEOPS; }
 			bench_barrier();
 
+			evict_pact_read(pact0, row0, row1); WAIT_CACHEOPS;
 			prefetch_pact_read(pact0, row0, row1);
-			conv_hidden_pad(pact0, hidden_w + 2u * CH * K * K * CH, pact1, row0, row1);
-			FENCE;
+			conv_hidden_pad(pact0, hidden_w + 2u * hstep, pact1, row0, row1);
+			FENCE; evict_pact_write(pact1, row0, row1); WAIT_CACHEOPS;
 			bench_barrier();
 			if (hart_id == 0u) { fill_halo(pact1); FENCE; evict(pact1, PADACT_BYTES); WAIT_CACHEOPS; }
 			bench_barrier();
 
+			evict_pact_read(pact1, row0, row1); WAIT_CACHEOPS;
 			prefetch_pact_read(pact1, row0, row1);
 			conv_final_pad(pact1, wpack + WH_BYTES, final_output, row0, row1);
 			FENCE;
