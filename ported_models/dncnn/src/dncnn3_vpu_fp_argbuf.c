@@ -858,6 +858,35 @@ static void prefetch_wpack_float(const float *wpack)
 #endif
 }
 
+#ifdef DNCNN_HALO_PAD
+/* Padded read-window prefetch. Real rows [row0,row1) live at padded rows
+ * [row0+1,row1+1); their 3x3 taps touch padded rows [row0, row1+2). Uses the
+ * PADW stride (not IMG_W). Gated by DNCNN_VPU_PREFETCH_READ_WINDOW. */
+static void prefetch_pact_read(const float *buffer, uint32_t row0, uint32_t row1)
+{
+#ifdef DNCNN_VPU_PREFETCH_READ_WINDOW
+	const uint32_t prow0 = row0;
+	const uint32_t prow1 = (row1 + 2u < PADH) ? (row1 + 2u) : PADH;
+	uint64_t addr = (uint64_t)(buffer + (uint64_t)prow0 * PADW * CH);
+	uint64_t lines = (((uint64_t)(prow1 - prow0) * PADW * CH *
+			   sizeof(float)) + 63u) >> 6;
+
+	while (lines > 15u) {
+		prefetch_va(0, addr, 15u, 64u, 0);
+		addr += 16u * 64u;
+		lines -= 15u;
+	}
+	if (lines > 0u) {
+		prefetch_va(0, addr, lines, 64u, 0);
+	}
+#else
+	(void)buffer;
+	(void)row0;
+	(void)row1;
+#endif
+}
+#endif  /* DNCNN_HALO_PAD */
+
 int main(uintptr_t arg_area)
 {
 	const uint32_t hart_id = bench_hart_id();
@@ -927,24 +956,28 @@ int main(uintptr_t arg_area)
 		{
 			const float *const hidden_w = wpack;
 
+			prefetch_pact_read(pact0, row0, row1);
 			conv_hidden_pad(pact0, hidden_w, pact1, row0, row1);
 			FENCE;
 			bench_barrier();
 			if (hart_id == 0u) { fill_halo(pact1); FENCE; evict(pact1, PADACT_BYTES); WAIT_CACHEOPS; }
 			bench_barrier();
 
+			prefetch_pact_read(pact1, row0, row1);
 			conv_hidden_pad(pact1, hidden_w + CH * K * K * CH, pact0, row0, row1);
 			FENCE;
 			bench_barrier();
 			if (hart_id == 0u) { fill_halo(pact0); FENCE; evict(pact0, PADACT_BYTES); WAIT_CACHEOPS; }
 			bench_barrier();
 
+			prefetch_pact_read(pact0, row0, row1);
 			conv_hidden_pad(pact0, hidden_w + 2u * CH * K * K * CH, pact1, row0, row1);
 			FENCE;
 			bench_barrier();
 			if (hart_id == 0u) { fill_halo(pact1); FENCE; evict(pact1, PADACT_BYTES); WAIT_CACHEOPS; }
 			bench_barrier();
 
+			prefetch_pact_read(pact1, row0, row1);
 			conv_final_pad(pact1, wpack + WH_BYTES, final_output, row0, row1);
 			FENCE;
 			evict(final_output + row0 * IMG_W, (row1 - row0) * IMG_W);
