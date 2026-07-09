@@ -31,6 +31,19 @@
           "-DACTIVE_HARTS=8",
           "-DBENCH_THREAD0_ONLY=1"
         ]
+      },
+      "yolo_int8": {
+        "defines": [
+          "-DYOLO_INT8=1",
+          "-DYOLO_K=3",
+          "-DYOLO_TRUNK=1",
+          "-DYOLO_TRUNK_PROBE=1",
+          "-fno-tree-loop-distribute-patterns",
+          "-ffp-contract=off",
+          "-DNUM_HARTS=16",
+          "-DACTIVE_HARTS=8",
+          "-DBENCH_THREAD0_ONLY=1"
+        ]
       }
     }
   },
@@ -47,10 +60,26 @@
         ]
       },
       "yolo": {
-        "defines": ["-DYOLO_PASSES=1"]
+        "defines": [
+          "-DYOLO_PASSES=1"
+        ]
       },
       "whisper": {
-        "defines": ["-DDEPTH_PASSES=1"]
+        "defines": [
+          "-DDEPTH_PASSES=1"
+        ]
+      },
+      "yolo_int8": {
+        "defines": [
+          "-DYOLO_INT8=1",
+          "-DYOLO_K=3",
+          "-DYOLO_TRUNK=1",
+          "-DYOLO_TRUNK_PROBE=1",
+          "-fno-tree-loop-distribute-patterns",
+          "-ffp-contract=off",
+          "-DACTIVE_HARTS=1",
+          "-DBENCH_THREAD0_ONLY=1"
+        ]
       }
     }
   },
@@ -71,17 +100,26 @@
       "file_loads": [
         {
           "address": "0x0",
-          "paths": ["zero2m.bin", "dncnn3-bench/zero2m.bin"],
+          "paths": [
+            "zero2m.bin",
+            "dncnn3-bench/zero2m.bin"
+          ],
           "required": true
         },
         {
           "address": "0x2000",
-          "paths": ["dncnn3_input.bin", "dncnn3-bench/dncnn3_input.bin"],
+          "paths": [
+            "dncnn3_input.bin",
+            "dncnn3-bench/dncnn3_input.bin"
+          ],
           "required": true
         },
         {
           "address": "0x4000",
-          "paths": ["dncnn3_weights.bin", "dncnn3-bench/dncnn3_weights.bin"],
+          "paths": [
+            "dncnn3_weights.bin",
+            "dncnn3-bench/dncnn3_weights.bin"
+          ],
           "required": true
         }
       ],
@@ -103,12 +141,17 @@
       "full_manifest": "yolo_100_variants.txt",
       "build": {
         "opt": "-O3",
-        "defines": ["-DYOLO_PASSES=1"]
+        "defines": [
+          "-DYOLO_PASSES=1"
+        ]
       },
       "file_loads": [
         {
           "address": "0x0",
-          "paths": ["zero2m.bin", "dncnn3-bench/zero2m.bin"],
+          "paths": [
+            "zero2m.bin",
+            "dncnn3-bench/zero2m.bin"
+          ],
           "required": true
         }
       ],
@@ -131,12 +174,17 @@
       "full_manifest": "whisper_100_variants.txt",
       "build": {
         "opt": "-O3",
-        "defines": ["-DDEPTH_PASSES=1"]
+        "defines": [
+          "-DDEPTH_PASSES=1"
+        ]
       },
       "file_loads": [
         {
           "address": "0x0",
-          "paths": ["zero2m.bin", "dncnn3-bench/zero2m.bin"],
+          "paths": [
+            "zero2m.bin",
+            "dncnn3-bench/zero2m.bin"
+          ],
           "required": true
         }
       ],
@@ -194,6 +242,49 @@
     },
     "deepseek_r1_15b": {
       "config": "ported_models/llama_cpp_et/benchmarks/deepseek_r1_15b.json"
+    },
+    "yolo_int8": {
+      "canonical_variant": "yolo_int8_00_trunk",
+      "source": "ported_models/yolo/src/yolo_int8_argbuf.c",
+      "bench_dir": "yolo-bench",
+      "manifest": "yolo_int8_variants.txt",
+      "full_manifest": "yolo_int8_variants.txt",
+      "build": {
+        "opt": "-O3",
+        "defines": [
+          "-DYOLO_INT8=1",
+          "-DYOLO_K=3",
+          "-DYOLO_TRUNK=1",
+          "-DYOLO_TRUNK_PROBE=1",
+          "-fno-tree-loop-distribute-patterns",
+          "-ffp-contract=off"
+        ]
+      },
+      "file_loads": [
+        {
+          "address": "0x0",
+          "paths": [
+            "zero2m.bin",
+            "dncnn3-bench/zero2m.bin"
+          ],
+          "required": true
+        }
+      ],
+      "dump_magic": "0x10510008",
+      "dump_size": "0x70000",
+      "accuracy": {
+        "kind": "uint8_npy",
+        "offset": "0x30000",
+        "shape": [
+          80,
+          80,
+          16
+        ],
+        "max_abs": 0,
+        "reference_path": "ported_models/yolo/refs/yolo_trunk_probe1_L1.npy",
+        "comment": "Gates the L1 (block0 conv1) int8 activation @0x30000 -- a DISCRIMINATING region (varies 0..5; diverges under a wrong first-conv weight/QUANT0/scale). The full-trunk final output @0x10000 collapses to all-128 (init_model weights decay activations to zero, like the FP32 yolo constant_u8=128 gate) so it is reproducibility-only. Weights + input are built on-device from init_model (no file-loaded blob)."
+      },
+      "requires_dncnn_inputs": false
     }
   }
 }
