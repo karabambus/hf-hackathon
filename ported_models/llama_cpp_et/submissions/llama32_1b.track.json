@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "track": "llama_3_2_1b_fastest",
+  "model": "llama32_1b",
+  "runtime_revision": "01f1dfb50733ae8d8b4eb9ab08184713bf79421f",
+  "submission_id": "karabambus-uberkernel-fusion"
+}
